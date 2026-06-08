@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { loginWithGoogle, logout, onUserChange, db } from "./firebase.js";
+import { doc, getDoc, setDoc, onSnapshot, collection } from "firebase/firestore";
 
 // ─── CONFIG ────────────────────────────────────────────────────────────────
 const ADMIN_PASSWORD = "dimos2024";
-const STORAGE_KEY = "tennis_bookings_v5";
 
 // Πρόγραμμα αντισφαίρισης: 2/6/2026 – 19/6/2026
 const SCHEDULE_START = "2026-06-02";
@@ -17,25 +18,26 @@ function formatDate(d) {
 function pad(n) { return String(n).padStart(2, "0"); }
 function slotLabel(h) { return `${pad(h)}:00 – ${pad(h + 1)}:00`; }
 
-// Επιστρέφει τις διαθέσιμες ώρες αντισφαίρισης για μια ημερομηνία
 function getSlotsForDate(dateStr) {
   if (dateStr < SCHEDULE_START || dateStr > SCHEDULE_END) return [];
-  const dow = new Date(dateStr + "T12:00:00").getDay(); // 0=Κυρ, 6=Σαβ
+  const dow = new Date(dateStr + "T12:00:00").getDay();
   const isWeekend = dow === 0 || dow === 6;
   return isWeekend
-    ? Array.from({ length: 7 }, (_, i) => 15 + i)  // 15:00–22:00
-    : [16, 17, 18];                                   // 16:00–19:00
+    ? Array.from({ length: 7 }, (_, i) => 15 + i)
+    : [16, 17, 18];
 }
 
-function dateHasSlots(dateStr) { return getSlotsForDate(dateStr).length > 0; }
-function loadBookings() { try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}"); } catch { return {}; } }
-function saveBookings(b) { localStorage.setItem(STORAGE_KEY, JSON.stringify(b)); }
+// ─── FIRESTORE HELPERS ─────────────────────────────────────────────────────
+async function loadDayBookings(dateStr) {
+  const ref = doc(db, "bookings", dateStr);
+  const snap = await getDoc(ref);
+  return snap.exists() ? snap.data() : {};
+}
 
-const MOCK_ACCOUNTS = [
-  { uid: "g_001", name: "Γιώργος Παπαδόπουλος", email: "gpapadopoulos@gmail.com" },
-  { uid: "g_002", name: "Μαρία Κωνσταντίνου",   email: "mkonstantinou@gmail.com" },
-  { uid: "g_003", name: "Νίκος Αλεξίου",         email: "nalexiou@gmail.com" },
-];
+async function saveDayBookings(dateStr, data) {
+  const ref = doc(db, "bookings", dateStr);
+  await setDoc(ref, data);
+}
 
 // ─── STYLES ────────────────────────────────────────────────────────────────
 const S = {
@@ -59,56 +61,10 @@ const S = {
   avatar: { width: 34, height: 34, borderRadius: "50%", background: "#40916c", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: "bold", flexShrink: 0 },
 };
 
-// ─── GOOGLE LOGIN MODAL ────────────────────────────────────────────────────
-function GoogleLoginModal({ onLogin, onClose }) {
-  const [mode, setMode] = useState("pick");
-  const [customName, setCustomName] = useState("");
-  const [customEmail, setCustomEmail] = useState("");
-
-  return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200, padding: 16 }}>
-      <div style={{ background: "#fff", borderRadius: 20, padding: 28, width: "100%", maxWidth: 380, boxShadow: "0 8px 40px rgba(0,0,0,0.25)" }}>
-        <div style={{ textAlign: "center", marginBottom: 20 }}>
-          <div style={{ fontSize: 32, marginBottom: 6 }}>🔵</div>
-          <h2 style={{ margin: 0, fontSize: 18, color: "#1b4332" }}>Είσοδος με Google</h2>
-          <p style={{ margin: "6px 0 0", fontSize: 13, color: "#666" }}>Επιλέξτε λογαριασμό</p>
-        </div>
-        {mode === "pick" && <>
-          {MOCK_ACCOUNTS.map(acc => (
-            <button key={acc.uid} onClick={() => onLogin(acc)} style={{
-              width: "100%", display: "flex", alignItems: "center", gap: 14,
-              padding: "12px 14px", borderRadius: 12, border: "1.5px solid #e0e0e0",
-              background: "#fafafa", cursor: "pointer", marginBottom: 10, textAlign: "left",
-            }}>
-              <div style={S.avatar}>{acc.name[0]}</div>
-              <div><div style={{ fontWeight: "bold", fontSize: 14 }}>{acc.name}</div><div style={{ fontSize: 12, color: "#888" }}>{acc.email}</div></div>
-            </button>
-          ))}
-          <button onClick={() => setMode("custom")} style={{ ...S.btnOutline, width: "100%", marginTop: 4 }}>+ Άλλος λογαριασμός</button>
-        </>}
-        {mode === "custom" && <>
-          <label style={S.label}>Ονοματεπώνυμο</label>
-          <input value={customName} onChange={e => setCustomName(e.target.value)} placeholder="π.χ. Κώστας Νικολάου" style={S.input} />
-          <label style={S.label}>Gmail</label>
-          <input value={customEmail} onChange={e => setCustomEmail(e.target.value)} placeholder="π.χ. kostas@gmail.com" style={S.input} type="email" />
-          <button onClick={() => { if (customName.trim() && customEmail.includes("@")) onLogin({ uid: "g_" + Date.now(), name: customName.trim(), email: customEmail.trim() }); }} style={{ ...S.btn, marginTop: 16 }}>Σύνδεση</button>
-          <button onClick={() => setMode("pick")} style={{ ...S.btnOutline, width: "100%", marginTop: 8 }}>← Πίσω</button>
-        </>}
-        <button onClick={onClose} style={{ color: "#999", background: "none", border: "none", width: "100%", marginTop: 12, cursor: "pointer", fontSize: 13 }}>Ακύρωση</button>
-      </div>
-    </div>
-  );
-}
-
-// ─── ADMIN BOOKING MODAL ────────────────────────────────────────────────────
+// ─── ADMIN BOOKING MODAL ───────────────────────────────────────────────────
 function AdminBookingModal({ slot, date, existing, onSave, onCancel, onClose }) {
   const [name, setName] = useState(existing?.name || "");
   const [partner, setPartner] = useState(existing?.partner || "");
-
-  function handleSave() {
-    if (!name.trim()) return;
-    onSave({ uid: existing?.uid || ("admin_" + Date.now()), name: name.trim(), partner: partner.trim() || null, byAdmin: true });
-  }
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 300, padding: 16 }}>
@@ -117,18 +73,14 @@ function AdminBookingModal({ slot, date, existing, onSave, onCancel, onClose }) 
           {existing ? "✏️ Επεξεργασία κράτησης" : "➕ Νέα κράτηση"}
         </h3>
         <p style={{ margin: "0 0 18px", fontSize: 13, color: "#95d5b2" }}>{slotLabel(slot)} · {formatDate(date)}</p>
-
         <label style={S.labelDark}>👤 Παίκτης 1 *</label>
         <input value={name} onChange={e => setName(e.target.value)} placeholder="Ονοματεπώνυμο" style={S.inputDark} />
-
         <label style={S.labelDark}>👤 Παίκτης 2 <span style={{ fontWeight: "normal", color: "#52b788" }}>(προαιρετικό)</span></label>
         <input value={partner} onChange={e => setPartner(e.target.value)} placeholder="Ονοματεπώνυμο" style={S.inputDark} />
-
         <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
           <button onClick={onClose} style={{ ...S.btnOutlineLight, flex: 1 }}>Άκυρο</button>
-          <button onClick={handleSave} style={{ ...S.btnAdmin, flex: 2, marginTop: 0 }}>💾 Αποθήκευση</button>
+          <button onClick={() => { if (name.trim()) onSave({ uid: existing?.uid || ("admin_" + Date.now()), name: name.trim(), partner: partner.trim() || null, byAdmin: true }); }} style={{ ...S.btnAdmin, flex: 2, marginTop: 0 }}>💾 Αποθήκευση</button>
         </div>
-
         {existing && (
           <button onClick={onCancel} style={{ ...S.btnDanger, width: "100%", marginTop: 12, padding: "11px", fontSize: 13, borderRadius: 10 }}>
             🗑️ Ακύρωση αυτής της κράτησης
@@ -142,25 +94,69 @@ function AdminBookingModal({ slot, date, existing, onSave, onCancel, onClose }) 
 // ─── MAIN APP ──────────────────────────────────────────────────────────────
 export default function App() {
   const [user, setUser] = useState(null);
-  const [showLogin, setShowLogin] = useState(false);
-  const [bookings, setBookings] = useState(loadBookings);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [dayBookings, setDayBookings] = useState({});
+  const [allBookings, setAllBookings] = useState({}); // for "has pending booking" check
   const [selectedDate, setSelectedDate] = useState(todayStr());
   const [selectedSlot, setSelectedSlot] = useState(null);
   const [step, setStep] = useState("slots");
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
   const [adminMode, setAdminMode] = useState(false);
   const [showAdminLogin, setShowAdminLogin] = useState(false);
   const [adminInput, setAdminInput] = useState("");
   const [adminErr, setAdminErr] = useState("");
   const [lastBooking, setLastBooking] = useState(null);
   const [partnerName, setPartnerName] = useState("");
-  // Admin booking modal
-  const [adminModal, setAdminModal] = useState(null); // { slot, existing? }
+  const [adminModal, setAdminModal] = useState(null);
 
-  const dayBookings = bookings[selectedDate] || {};
-  function persist(nb) { setBookings(nb); saveBookings(nb); }
-  function handleLogin(acc) { setUser(acc); setShowLogin(false); }
-  function handleLogout() { setUser(null); setSelectedSlot(null); setStep("slots"); setError(""); }
+  // ── Firebase Auth listener ──
+  useEffect(() => {
+    const unsub = onUserChange(firebaseUser => {
+      if (firebaseUser) {
+        setUser({
+          uid: firebaseUser.uid,
+          name: firebaseUser.displayName || firebaseUser.email,
+          email: firebaseUser.email,
+          photo: firebaseUser.photoURL,
+        });
+      } else {
+        setUser(null);
+      }
+      setAuthLoading(false);
+    });
+    return unsub;
+  }, []);
+
+  // ── Firestore listener for selected date ──
+  useEffect(() => {
+    const ref = doc(db, "bookings", selectedDate);
+    const unsub = onSnapshot(ref, snap => {
+      setDayBookings(snap.exists() ? snap.data() : {});
+    });
+    return unsub;
+  }, [selectedDate]);
+
+  // ── Firestore listener for all dates (to check pending bookings) ──
+  useEffect(() => {
+    if (!user) return;
+    // Listen to all booking docs in range
+    const dates = [];
+    let d = new Date(SCHEDULE_START + "T12:00:00");
+    const end = new Date(SCHEDULE_END + "T12:00:00");
+    while (d <= end) {
+      dates.push(d.toISOString().split("T")[0]);
+      d.setDate(d.getDate() + 1);
+    }
+    const unsubs = dates.map(date => {
+      const ref = doc(db, "bookings", date);
+      return onSnapshot(ref, snap => {
+        setAllBookings(prev => ({ ...prev, [date]: snap.exists() ? snap.data() : {} }));
+      });
+    });
+    return () => unsubs.forEach(u => u());
+  }, [user]);
+
   function isBooked(h) { return !!dayBookings[h]; }
   function isMyBooking(h) { return user && dayBookings[h]?.uid === user.uid; }
 
@@ -168,7 +164,7 @@ export default function App() {
     if (!user) return true;
     const nowDate = todayStr();
     const nowHour = new Date().getHours();
-    for (const [date, slots] of Object.entries(bookings)) {
+    for (const [date, slots] of Object.entries(allBookings)) {
       for (const [h, b] of Object.entries(slots)) {
         if (b.uid !== user.uid) continue;
         if (date > nowDate) return false;
@@ -178,6 +174,25 @@ export default function App() {
     return true;
   }
 
+  async function handleGoogleLogin() {
+    try {
+      setLoading(true);
+      await loginWithGoogle();
+    } catch (e) {
+      setError("Αποτυχία σύνδεσης. Δοκιμάστε ξανά.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleLogout() {
+    await logout();
+    setSelectedSlot(null);
+    setStep("slots");
+    setError("");
+    setAllBookings({});
+  }
+
   function handleSlotClick(h) {
     if (isBooked(h)) return;
     setError("");
@@ -185,7 +200,7 @@ export default function App() {
   }
 
   function handleBook() {
-    if (!user) { setShowLogin(true); return; }
+    if (!user) { handleGoogleLogin(); return; }
     if (selectedSlot === null) { setError("Επιλέξτε μία ώρα."); return; }
     if (!userCanBookAgain()) {
       setError("Έχετε ήδη κράτηση που δεν έχει ακόμα παιχτεί. Μπορείτε να κλείσετε νέα ώρα μόνο αφού παίξετε.");
@@ -194,34 +209,37 @@ export default function App() {
     setStep("confirm");
   }
 
-  function handleConfirm() {
-    const nb = { ...bookings, [selectedDate]: { ...(bookings[selectedDate] || {}) } };
-    nb[selectedDate][selectedSlot] = { uid: user.uid, name: user.name, email: user.email, partner: partnerName.trim() || null };
-    persist(nb);
-    setLastBooking({ date: selectedDate, slot: selectedSlot, name: user.name, partner: partnerName.trim() });
-    setStep("success");
-    setSelectedSlot(null);
-    setPartnerName("");
+  async function handleConfirm() {
+    setLoading(true);
+    try {
+      const newDay = { ...dayBookings, [selectedSlot]: { uid: user.uid, name: user.name, email: user.email, partner: partnerName.trim() || null } };
+      await saveDayBookings(selectedDate, newDay);
+      setLastBooking({ date: selectedDate, slot: selectedSlot, name: user.name, partner: partnerName.trim() });
+      setStep("success");
+      setSelectedSlot(null);
+      setPartnerName("");
+    } catch (e) {
+      setError("Σφάλμα αποθήκευσης. Δοκιμάστε ξανά.");
+    } finally {
+      setLoading(false);
+    }
   }
 
-  function handleCancelMine(h) {
-    const nb = { ...bookings, [selectedDate]: { ...(bookings[selectedDate] || {}) } };
-    delete nb[selectedDate][h];
-    persist(nb);
+  async function handleCancelMine(h) {
+    const newDay = { ...dayBookings };
+    delete newDay[h];
+    await saveDayBookings(selectedDate, newDay);
   }
 
-  // ADMIN: cancel any slot
-  function adminCancel(h) {
-    const nb = { ...bookings, [selectedDate]: { ...(bookings[selectedDate] || {}) } };
-    delete nb[selectedDate][h];
-    persist(nb);
+  async function adminCancel(h) {
+    const newDay = { ...dayBookings };
+    delete newDay[h];
+    await saveDayBookings(selectedDate, newDay);
   }
 
-  // ADMIN: save from modal (new or edit)
-  function adminSaveBooking(slot, data) {
-    const nb = { ...bookings, [selectedDate]: { ...(bookings[selectedDate] || {}) } };
-    nb[selectedDate][slot] = data;
-    persist(nb);
+  async function adminSaveBooking(slot, data) {
+    const newDay = { ...dayBookings, [slot]: data };
+    await saveDayBookings(selectedDate, newDay);
     setAdminModal(null);
   }
 
@@ -230,8 +248,9 @@ export default function App() {
     else setAdminErr("Λάθος κωδικός.");
   }
 
-  const minDate = todayStr();
-  const maxDate = addDays(14);
+  const daySlots = getSlotsForDate(selectedDate);
+  const bookedCount = Object.keys(dayBookings).length;
+  const totalSlots = daySlots.length;
 
   function slotColors(h) {
     const booked = isBooked(h);
@@ -245,29 +264,38 @@ export default function App() {
     return { bg: "#f8faf8", border: "#d0e8d0", color: "#2d6a4f", cursor: "pointer" };
   }
 
-  // Slots for selected date
-  const daySlots = getSlotsForDate(selectedDate);
-  const bookedCount = Object.keys(dayBookings).length;
-  const totalSlots = daySlots.length;
+  if (authLoading) {
+    return (
+      <div style={{ ...S.app, display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh" }}>
+        <div style={{ textAlign: "center" }}>
+          <div style={{ fontSize: 48, marginBottom: 12 }}>🎾</div>
+          <p style={{ color: "#2d6a4f", fontSize: 16 }}>Φόρτωση...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={S.app}>
       {/* HEADER */}
       <div style={{ background: "linear-gradient(160deg, #1b4332 0%, #2d6a4f 60%, #40916c 100%)", padding: "28px 20px 24px", color: "#fff", textAlign: "center", boxShadow: "0 4px 20px rgba(0,0,0,0.25)" }}>
         <div style={{ fontSize: 38, marginBottom: 4 }}>🎾</div>
-        <h1 style={{ margin: 0, fontSize: 22, fontWeight: "bold" }}>Δημοτικό Γήπεδο Τένις</h1>
+        <h1 style={{ margin: 0, fontSize: 22, fontWeight: "bold" }}>Milos Tennis Club</h1>
         <p style={{ margin: "4px 0 0", fontSize: 13, opacity: 0.7, fontStyle: "italic" }}>Ηλεκτρονική κράτηση ώρας</p>
 
         <div style={{ marginTop: 14, display: "flex", justifyContent: "center", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           {user ? (
             <div style={{ display: "flex", alignItems: "center", gap: 8, background: "rgba(255,255,255,0.15)", borderRadius: 30, padding: "6px 14px" }}>
-              <div style={{ ...S.avatar, width: 28, height: 28, fontSize: 11, background: "rgba(255,255,255,0.3)" }}>{user.name[0]}</div>
+              {user.photo
+                ? <img src={user.photo} style={{ width: 28, height: 28, borderRadius: "50%" }} />
+                : <div style={{ ...S.avatar, width: 28, height: 28, fontSize: 11, background: "rgba(255,255,255,0.3)" }}>{user.name[0]}</div>
+              }
               <span style={{ fontSize: 13 }}>{user.name}</span>
               <button onClick={handleLogout} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.7)", cursor: "pointer", fontSize: 18, lineHeight: 1 }}>×</button>
             </div>
           ) : (
-            <button onClick={() => setShowLogin(true)} style={{ background: "#fff", color: "#2d6a4f", border: "none", borderRadius: 20, padding: "8px 18px", fontSize: 13, fontWeight: "bold", cursor: "pointer" }}>
-              🔵 Σύνδεση με Google
+            <button onClick={handleGoogleLogin} disabled={loading} style={{ background: "#fff", color: "#2d6a4f", border: "none", borderRadius: 20, padding: "8px 18px", fontSize: 13, fontWeight: "bold", cursor: "pointer", opacity: loading ? 0.7 : 1 }}>
+              🔵 {loading ? "Σύνδεση..." : "Σύνδεση με Google"}
             </button>
           )}
 
@@ -323,11 +351,11 @@ export default function App() {
         <div style={S.card}>
           <p style={{ ...S.cardTitle, marginBottom: 10 }}>📅 Επιλογή ημερομηνίας</p>
           <div style={{ background: "#e8f4ec", borderRadius: 10, padding: "8px 12px", marginBottom: 10, fontSize: 12, color: "#2d6a4f" }}>
-            📋 Πρόγραμμα αντισφαίρισης: <strong>2/6 – 19/6/2026</strong><br/>
+            📋 Πρόγραμμα αντισφαίρισης: <strong>2/6 – 19/6/2026</strong><br />
             Δευτ–Παρ: 16:00–19:00 &nbsp;|&nbsp; Σαβ–Κυρ: 15:00–22:00
           </div>
           <input type="date" value={selectedDate}
-            min={adminMode ? "2026-06-02" : SCHEDULE_START}
+            min={adminMode ? "2026-01-01" : SCHEDULE_START}
             max={adminMode ? addDays(365) : SCHEDULE_END}
             onChange={e => { setSelectedDate(e.target.value); setSelectedSlot(null); setStep("slots"); setError(""); }}
             style={{ ...S.input, marginTop: 0 }} />
@@ -345,66 +373,52 @@ export default function App() {
             {daySlots.length === 0 && (
               <div style={{ textAlign: "center", padding: "24px 0", color: "#888" }}>
                 <div style={{ fontSize: 36, marginBottom: 8 }}>📅</div>
-                <p style={{ margin: 0, fontSize: 14 }}>Δεν υπάρχουν ώρες αντισφαίρισης<br/>για αυτή την ημερομηνία.</p>
+                <p style={{ margin: 0, fontSize: 14 }}>Δεν υπάρχουν ώρες αντισφαίρισης<br />για αυτή την ημερομηνία.</p>
                 {!adminMode && <p style={{ margin: "8px 0 0", fontSize: 12, color: "#aaa" }}>Επιλέξτε ημερομηνία μεταξύ 2/6 και 19/6/2026.</p>}
               </div>
             )}
 
-            {daySlots.length > 0 && <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-              {daySlots.map(h => {
-                const booked = isBooked(h);
-                const mine = isMyBooking(h);
-                const sel = selectedSlot === h;
-                const { bg, border, color, cursor } = slotColors(h);
-                const info = dayBookings[h];
-
-                return (
-                  <button key={h}
-                    onClick={() => {
-                      if (adminMode) {
-                        // Admin: click booked → edit modal, click free → add modal
-                        setAdminModal({ slot: h, existing: booked ? info : null });
-                      } else {
-                        if (!booked) handleSlotClick(h);
-                      }
-                    }}
-                    style={{ padding: "12px 8px", borderRadius: 12, border: `2px solid ${border}`, background: bg, color, fontSize: 13, cursor, textAlign: "center", fontFamily: "inherit", transition: "all 0.15s" }}>
-
-                    <div style={{ fontSize: 12, marginBottom: 2 }}>{slotLabel(h)}</div>
-
-                    {booked && (
-                      <div style={{ fontSize: 11, marginTop: 2 }}>
-                        <div style={{ fontWeight: "bold" }}>👤 {info.name}</div>
-                        {info.partner && <div style={{ opacity: 0.85 }}>👤 {info.partner}</div>}
-                        {info.byAdmin && <div style={{ opacity: 0.6, fontSize: 10 }}>📋 Admin</div>}
-                        {mine && !adminMode && (
-                          <button onClick={e => { e.stopPropagation(); handleCancelMine(h); }} style={S.btnDanger}>Ακύρωση</button>
-                        )}
-                        {adminMode && (
-                          <div style={{ display: "flex", gap: 4, justifyContent: "center", marginTop: 4 }}>
-                            <span style={{ fontSize: 10, color: "#7a4f00", background: "rgba(255,200,0,0.2)", borderRadius: 4, padding: "2px 6px" }}>✏️ Επεξεργασία</span>
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {!booked && adminMode && (
-                      <div style={{ fontSize: 10, marginTop: 3, color: "#2d6a4f", opacity: 0.7 }}>+ Προσθήκη</div>
-                    )}
-
-                    {sel && !booked && !adminMode && <div style={{ fontSize: 10, marginTop: 3 }}>✓ Επιλεγμένο</div>}
-                  </button>
-                );
-              })}
-            </div>}
+            {daySlots.length > 0 && (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                {daySlots.map(h => {
+                  const booked = isBooked(h);
+                  const mine = isMyBooking(h);
+                  const sel = selectedSlot === h;
+                  const { bg, border, color, cursor } = slotColors(h);
+                  const info = dayBookings[h];
+                  return (
+                    <button key={h}
+                      onClick={() => {
+                        if (adminMode) { setAdminModal({ slot: h, existing: booked ? info : null }); }
+                        else if (!booked) handleSlotClick(h);
+                      }}
+                      style={{ padding: "12px 8px", borderRadius: 12, border: `2px solid ${border}`, background: bg, color, fontSize: 13, cursor, textAlign: "center", fontFamily: "inherit", transition: "all 0.15s" }}>
+                      <div style={{ fontSize: 12, marginBottom: 2 }}>{slotLabel(h)}</div>
+                      {booked && (
+                        <div style={{ fontSize: 11, marginTop: 2 }}>
+                          <div style={{ fontWeight: "bold" }}>👤 {info.name}</div>
+                          {info.partner && <div style={{ opacity: 0.85 }}>👤 {info.partner}</div>}
+                          {info.byAdmin && <div style={{ opacity: 0.6, fontSize: 10 }}>📋 Admin</div>}
+                          {mine && !adminMode && (
+                            <button onClick={e => { e.stopPropagation(); handleCancelMine(h); }} style={S.btnDanger}>Ακύρωση</button>
+                          )}
+                          {adminMode && <div style={{ fontSize: 10, color: "#7a4f00", background: "rgba(255,200,0,0.2)", borderRadius: 4, padding: "2px 6px", marginTop: 4 }}>✏️ Επεξεργασία</div>}
+                        </div>
+                      )}
+                      {!booked && adminMode && <div style={{ fontSize: 10, marginTop: 3, opacity: 0.7 }}>+ Προσθήκη</div>}
+                      {sel && !booked && !adminMode && <div style={{ fontSize: 10, marginTop: 3 }}>✓ Επιλεγμένο</div>}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
 
             {error && <div style={S.error}>⚠️ {error}</div>}
 
-            {/* Legend */}
             <div style={{ display: "flex", gap: 10, marginTop: 14, fontSize: 11, color: "#666", flexWrap: "wrap" }}>
               {(adminMode
-                ? [["#f0fff4","#74c69d","Διαθέσιμο"],["#fff3cd","#e6a817","Κλεισμένο"],["#d8f3dc","#2d6a4f","Δική μου"]]
-                : [["#f8faf8","#d0e8d0","Διαθέσιμο"],["#fde8e8","#e5a0a0","Κλεισμένο"],["#d8f3dc","#2d6a4f","Δική μου"],["#2d6a4f","#1b4332","Επιλεγμένο"]]
+                ? [["#f0fff4", "#74c69d", "Διαθέσιμο"], ["#fff3cd", "#e6a817", "Κλεισμένο"], ["#d8f3dc", "#2d6a4f", "Δική μου"]]
+                : [["#f8faf8", "#d0e8d0", "Διαθέσιμο"], ["#fde8e8", "#e5a0a0", "Κλεισμένο"], ["#d8f3dc", "#2d6a4f", "Δική μου"], ["#2d6a4f", "#1b4332", "Επιλεγμένο"]]
               ).map(([bg, br, label]) => (
                 <span key={label} style={{ display: "flex", alignItems: "center", gap: 4 }}>
                   <span style={{ width: 12, height: 12, borderRadius: 3, background: bg, border: `1.5px solid ${br}`, display: "inline-block" }} />
@@ -426,13 +440,16 @@ export default function App() {
           </div>
         )}
 
-        {/* USER CONFIRM */}
+        {/* CONFIRM */}
         {step === "confirm" && (
           <div style={S.card}>
             <p style={S.cardTitle}>📋 Επιβεβαίωση κράτησης</p>
             <div style={{ background: "#f0f8f2", borderRadius: 12, padding: "14px 16px", marginBottom: 16 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-                <div style={S.avatar}>{user?.name[0]}</div>
+                {user?.photo
+                  ? <img src={user.photo} style={{ width: 34, height: 34, borderRadius: "50%" }} />
+                  : <div style={S.avatar}>{user?.name[0]}</div>
+                }
                 <div>
                   <div style={{ fontWeight: "bold", fontSize: 15 }}>{user?.name}</div>
                   <div style={{ fontSize: 12, color: "#666" }}>{user?.email}</div>
@@ -447,7 +464,9 @@ export default function App() {
             <input value={partnerName} onChange={e => setPartnerName(e.target.value)} placeholder="π.χ. Κώστας Νικολάου" style={S.input} />
             <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
               <button onClick={() => setStep("slots")} style={{ ...S.btnOutline, flex: 1 }}>← Πίσω</button>
-              <button onClick={handleConfirm} style={{ ...S.btn, flex: 2, marginTop: 0 }}>✅ Επιβεβαίωση</button>
+              <button onClick={handleConfirm} disabled={loading} style={{ ...S.btn, flex: 2, marginTop: 0, opacity: loading ? 0.7 : 1 }}>
+                {loading ? "⏳ Αποθήκευση..." : "✅ Επιβεβαίωση"}
+              </button>
             </div>
           </div>
         )}
@@ -468,9 +487,6 @@ export default function App() {
           </div>
         )}
       </div>
-
-      {/* MODALS */}
-      {showLogin && <GoogleLoginModal onLogin={handleLogin} onClose={() => setShowLogin(false)} />}
 
       {adminModal && (
         <AdminBookingModal
