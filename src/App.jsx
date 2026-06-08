@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { loginWithGoogle, logout, onUserChange, db } from "./firebase.js";
-import { doc, getDoc, setDoc, onSnapshot, collection } from "firebase/firestore";
+import { doc, getDoc, setDoc, deleteDoc, onSnapshot } from "firebase/firestore";
 
 // ─── CONFIG ────────────────────────────────────────────────────────────────
 const ADMIN_PASSWORD = "dimos2024";
@@ -96,7 +96,7 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [dayBookings, setDayBookings] = useState({});
-  const [allBookings, setAllBookings] = useState({}); // for "has pending booking" check
+  const [allBookings, setAllBookings] = useState({}); // user's active booking { date, hour }
   const [selectedDate, setSelectedDate] = useState(todayStr());
   const [selectedSlot, setSelectedSlot] = useState(null);
   const [step, setStep] = useState("slots");
@@ -138,39 +138,29 @@ export default function App() {
   }, [selectedDate]);
 
   // ── Firestore listener for all dates (to check pending bookings) ──
+  // Listen to user's active booking in Firestore (single doc per user)
   useEffect(() => {
-    if (!user) return;
-    // Listen to all booking docs in range
-    const dates = [];
-    let d = new Date(SCHEDULE_START + "T12:00:00");
-    const end = new Date(SCHEDULE_END + "T12:00:00");
-    while (d <= end) {
-      dates.push(d.toISOString().split("T")[0]);
-      d.setDate(d.getDate() + 1);
-    }
-    const unsubs = dates.map(date => {
-      const ref = doc(db, "bookings", date);
-      return onSnapshot(ref, snap => {
-        setAllBookings(prev => ({ ...prev, [date]: snap.exists() ? snap.data() : {} }));
-      });
+    if (!user) { setAllBookings({}); return; }
+    const ref = doc(db, "userBookings", user.uid);
+    const unsub = onSnapshot(ref, snap => {
+      setAllBookings(snap.exists() ? snap.data() : {});
     });
-    return () => unsubs.forEach(u => u());
+    return unsub;
   }, [user]);
 
   function isBooked(h) { return !!dayBookings[h]; }
   function isMyBooking(h) { return user && dayBookings[h]?.uid === user.uid; }
 
+  // allBookings here = { date: "2026-06-08", hour: 16 } or empty
   function userCanBookAgain() {
     if (!user) return true;
+    const pending = allBookings; // { date, hour }
+    if (!pending.date || !pending.hour) return true;
     const nowDate = todayStr();
     const nowHour = new Date().getHours();
-    for (const [date, slots] of Object.entries(allBookings)) {
-      for (const [h, b] of Object.entries(slots)) {
-        if (b.uid !== user.uid) continue;
-        if (date > nowDate) return false;
-        if (date === nowDate && parseInt(h) >= nowHour) return false;
-      }
-    }
+    // Has a future booking or a booking today that hasn't passed yet
+    if (pending.date > nowDate) return false;
+    if (pending.date === nowDate && pending.hour >= nowHour) return false;
     return true;
   }
 
@@ -214,6 +204,8 @@ export default function App() {
     try {
       const newDay = { ...dayBookings, [selectedSlot]: { uid: user.uid, name: user.name, email: user.email, partner: partnerName.trim() || null } };
       await saveDayBookings(selectedDate, newDay);
+      // Save user's active booking so we can block double-bookings
+      await setDoc(doc(db, "userBookings", user.uid), { date: selectedDate, hour: selectedSlot });
       setLastBooking({ date: selectedDate, slot: selectedSlot, name: user.name, partner: partnerName.trim() });
       setStep("success");
       setSelectedSlot(null);
@@ -229,6 +221,8 @@ export default function App() {
     const newDay = { ...dayBookings };
     delete newDay[h];
     await saveDayBookings(selectedDate, newDay);
+    // Remove user's active booking so they can book again
+    await deleteDoc(doc(db, "userBookings", user.uid));
   }
 
   async function adminCancel(h) {
