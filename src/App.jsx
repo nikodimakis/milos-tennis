@@ -151,16 +151,14 @@ export default function App() {
   function isBooked(h) { return !!dayBookings[h]; }
   function isMyBooking(h) { return user && dayBookings[h]?.uid === user.uid; }
 
-  // allBookings here = { date: "2026-06-08", hour: 16 } or empty
   function userCanBookAgain() {
     if (!user) return true;
-    const pending = allBookings; // { date, hour }
-    if (!pending.date || !pending.hour) return true;
+    const pending = allBookings;
+    if (!pending || !pending.date) return true;
     const nowDate = todayStr();
     const nowHour = new Date().getHours();
-    // Has a future booking or a booking today that hasn't passed yet
     if (pending.date > nowDate) return false;
-    if (pending.date === nowDate && pending.hour >= nowHour) return false;
+    if (pending.date === nowDate && Number(pending.hour) >= nowHour) return false;
     return true;
   }
 
@@ -189,12 +187,23 @@ export default function App() {
     setSelectedSlot(h === selectedSlot ? null : h);
   }
 
-  function handleBook() {
+  async function handleBook() {
     if (!user) { handleGoogleLogin(); return; }
     if (selectedSlot === null) { setError("Επιλέξτε μία ώρα."); return; }
-    if (!userCanBookAgain()) {
-      setError("Έχετε ήδη κράτηση που δεν έχει ακόμα παιχτεί. Μπορείτε να κλείσετε νέα ώρα μόνο αφού παίξετε.");
-      return;
+    // Live check from Firestore
+    const ref = doc(db, "userBookings", user.uid);
+    const snap = await getDoc(ref);
+    if (snap.exists()) {
+      const pending = snap.data();
+      const nowDate = todayStr();
+      const nowHour = new Date().getHours();
+      const blocked =
+        pending.date > nowDate ||
+        (pending.date === nowDate && Number(pending.hour) >= nowHour);
+      if (blocked) {
+        setError("Έχετε ήδη κράτηση που δεν έχει ακόμα παιχτεί. Μπορείτε να κλείσετε νέα ώρα μόνο αφού παίξετε.");
+        return;
+      }
     }
     setStep("confirm");
   }
