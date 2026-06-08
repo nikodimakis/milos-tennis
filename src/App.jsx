@@ -276,9 +276,15 @@ export default function App() {
   }
 
   async function adminCancel(h) {
-    const newDay = { ...dayBookings };
+    // Βρες τον uid του χρήστη που είχε κάνει την κράτηση
+    const booking = (weekBookings[selectedDate] || {})[h];
+    const newDay = { ...(weekBookings[selectedDate] || {}) };
     delete newDay[h];
     await saveDayBookings(selectedDate, newDay);
+    // Αν η κράτηση ήταν από χρήστη (όχι admin), ξεκλείδωσέ τον
+    if (booking?.uid && !booking.byAdmin) {
+      await deleteDoc(doc(db, "userBookings", booking.uid));
+    }
   }
 
   async function adminSaveBooking(slot, data) {
