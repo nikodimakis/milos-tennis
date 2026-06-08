@@ -200,6 +200,12 @@ export default function App() {
   }
 
   async function handleConfirm() {
+    // Διπλός έλεγχος πριν αποθηκεύσουμε
+    if (!userCanBookAgain()) {
+      setError("Έχετε ήδη κράτηση που δεν έχει ακόμα παιχτεί.");
+      setStep("slots");
+      return;
+    }
     setLoading(true);
     try {
       const newDay = { ...dayBookings, [selectedSlot]: { uid: user.uid, name: user.name, email: user.email, partner: partnerName.trim() || null } };
