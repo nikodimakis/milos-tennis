@@ -20,11 +20,11 @@ function slotLabel(h) { return `${pad(h)}:00 – ${pad(h + 1)}:00`; }
 
 function getSlotsForDate(dateStr) {
   if (dateStr < SCHEDULE_START || dateStr > SCHEDULE_END) return [];
-  const dow = new Date(dateStr + "T12:00:00").getDay();
-  const isWeekend = dow === 0 || dow === 6;
-  return isWeekend
-    ? Array.from({ length: 7 }, (_, i) => 15 + i)
-    : [16, 17, 18];
+  const dow = new Date(dateStr + "T12:00:00").getDay(); // 0=Κυρ,1=Δευ,...,6=Σαβ
+  if (dow === 3) return [19, 20, 21];                          // Τετάρτη: 19-22
+  if (dow === 0 || dow === 6) return [15,16,17,18,19,20,21];  // Σαβ/Κυρ: 15-22
+  if (dow === 0) return [];                                     // Κυριακή κλειστή? No - covered above
+  return [16, 17, 18];                                          // Δευ/Τρι/Πεμ/Παρ: 16-19
 }
 
 // ─── FIRESTORE HELPERS ─────────────────────────────────────────────────────
@@ -96,6 +96,8 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [dayBookings, setDayBookings] = useState({});
+  const [weekBookings, setWeekBookings] = useState({}); // { dateStr: { hour: booking } }
+  const [weekMonday, setWeekMonday] = useState(() => getWeekMonday(todayStr()));
   const [allBookings, setAllBookings] = useState({}); // user's active booking { date, hour }
   const [selectedDate, setSelectedDate] = useState(todayStr());
   const [selectedSlot, setSelectedSlot] = useState(null);
@@ -138,6 +140,18 @@ export default function App() {
   }, [selectedDate]);
 
   // ── Firestore listener for all dates (to check pending bookings) ──
+  // Listen to all bookings for the current week
+  useEffect(() => {
+    const days = getWeekDays(weekMonday);
+    const unsubs = days.map(date => {
+      const ref = doc(db, "bookings", date);
+      return onSnapshot(ref, snap => {
+        setWeekBookings(prev => ({ ...prev, [date]: snap.exists() ? snap.data() : {} }));
+      });
+    });
+    return () => unsubs.forEach(u => u());
+  }, [weekMonday]);
+
   // Listen to user's active booking in Firestore (single doc per user)
   useEffect(() => {
     if (!user) { setAllBookings({}); return; }
@@ -233,10 +247,14 @@ export default function App() {
   }
 
   async function handleCancelMine(h) {
-    const newDay = { ...dayBookings };
+    await handleCancelMineOnDate(selectedDate, h);
+  }
+
+  async function handleCancelMineOnDate(date, h) {
+    const current = weekBookings[date] || {};
+    const newDay = { ...current };
     delete newDay[h];
-    await saveDayBookings(selectedDate, newDay);
-    // Remove user's active booking so they can book again
+    await saveDayBookings(date, newDay);
     await deleteDoc(doc(db, "userBookings", user.uid));
   }
 
@@ -356,98 +374,156 @@ export default function App() {
           </div>
         )}
 
-        {/* Date picker */}
-        <div style={S.card}>
-          <p style={{ ...S.cardTitle, marginBottom: 10 }}>📅 Επιλογή ημερομηνίας</p>
-          <div style={{ background: "#e8f4ec", borderRadius: 10, padding: "8px 12px", marginBottom: 10, fontSize: 12, color: "#2d6a4f" }}>
-            📋 Πρόγραμμα αντισφαίρισης: <strong>2/6 – 19/6/2026</strong><br />
-            Δευτ–Παρ: 16:00–19:00 &nbsp;|&nbsp; Σαβ–Κυρ: 15:00–22:00
-          </div>
-          <input type="date" value={selectedDate}
-            min={adminMode ? "2026-01-01" : SCHEDULE_START}
-            max={adminMode ? addDays(365) : SCHEDULE_END}
-            onChange={e => { setSelectedDate(e.target.value); setSelectedSlot(null); setStep("slots"); setError(""); }}
-            style={{ ...S.input, marginTop: 0 }} />
-          <p style={{ margin: "8px 0 0", fontSize: 14, color: "#4a6741", fontStyle: "italic" }}>{formatDate(selectedDate)}</p>
-        </div>
+        {/* WEEKLY VIEW */}
+        {step === "slots" && (() => {
+          const weekDays = getWeekDays(weekMonday);
+          const prevMonday = new Date(weekMonday + "T12:00:00");
+          prevMonday.setDate(prevMonday.getDate() - 7);
+          const prevMondayStr = prevMonday.toISOString().split("T")[0];
+          const nextMonday = new Date(weekMonday + "T12:00:00");
+          nextMonday.setDate(nextMonday.getDate() + 7);
+          const nextMondayStr = nextMonday.toISOString().split("T")[0];
+          const canGoPrev = adminMode || prevMondayStr >= SCHEDULE_START || weekMonday > SCHEDULE_START;
+          const canGoNext = adminMode || nextMondayStr <= SCHEDULE_END;
 
-        {/* SLOTS */}
-        {step === "slots" && (
-          <div style={S.card}>
-            <p style={S.cardTitle}>
-              🕐 Ώρες αντισφαίρισης
-              <span style={{ fontWeight: "normal", fontSize: 12, color: "#888", marginLeft: 8 }}>1 ώρα ανά κράτηση</span>
-            </p>
-
-            {daySlots.length === 0 && (
-              <div style={{ textAlign: "center", padding: "24px 0", color: "#888" }}>
-                <div style={{ fontSize: 36, marginBottom: 8 }}>📅</div>
-                <p style={{ margin: 0, fontSize: 14 }}>Δεν υπάρχουν ώρες αντισφαίρισης<br />για αυτή την ημερομηνία.</p>
-                {!adminMode && <p style={{ margin: "8px 0 0", fontSize: 12, color: "#aaa" }}>Επιλέξτε ημερομηνία μεταξύ 2/6 και 19/6/2026.</p>}
+          return (
+            <>
+              {/* Schedule info */}
+              <div style={{ background: "#e8f4ec", borderRadius: 12, padding: "8px 14px", marginBottom: 12, fontSize: 12, color: "#2d6a4f" }}>
+                📋 <strong>02/06–19/06/2026</strong> &nbsp;·&nbsp; Δευ/Τρι/Πεμ/Παρ: 16–19 &nbsp;·&nbsp; Τετ: 19–22 &nbsp;·&nbsp; Σαβ/Κυρ: 15–22
               </div>
-            )}
 
-            {daySlots.length > 0 && (
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                {daySlots.map(h => {
-                  const booked = isBooked(h);
-                  const mine = isMyBooking(h);
-                  const sel = selectedSlot === h;
-                  const { bg, border, color, cursor } = slotColors(h);
-                  const info = dayBookings[h];
-                  return (
-                    <button key={h}
-                      onClick={() => {
-                        if (adminMode) { setAdminModal({ slot: h, existing: booked ? info : null }); }
-                        else if (!booked) handleSlotClick(h);
-                      }}
-                      style={{ padding: "12px 8px", borderRadius: 12, border: `2px solid ${border}`, background: bg, color, fontSize: 13, cursor, textAlign: "center", fontFamily: "inherit", transition: "all 0.15s" }}>
-                      <div style={{ fontSize: 12, marginBottom: 2 }}>{slotLabel(h)}</div>
-                      {booked && (
-                        <div style={{ fontSize: 11, marginTop: 2 }}>
-                          <div style={{ fontWeight: "bold" }}>👤 {info.name}</div>
-                          {info.partner && <div style={{ opacity: 0.85 }}>👤 {info.partner}</div>}
-                          {info.byAdmin && <div style={{ opacity: 0.6, fontSize: 10 }}>📋 Admin</div>}
-                          {mine && !adminMode && (
-                            <button onClick={e => { e.stopPropagation(); handleCancelMine(h); }} style={S.btnDanger}>Ακύρωση</button>
-                          )}
-                          {adminMode && <div style={{ fontSize: 10, color: "#7a4f00", background: "rgba(255,200,0,0.2)", borderRadius: 4, padding: "2px 6px", marginTop: 4 }}>✏️ Επεξεργασία</div>}
-                        </div>
+              {/* Week navigation */}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                <button onClick={() => { setWeekMonday(prevMondayStr); setSelectedSlot(null); }} disabled={!canGoPrev}
+                  style={{ background: canGoPrev ? "#2d6a4f" : "#ccc", color: "#fff", border: "none", borderRadius: 10, padding: "8px 14px", cursor: canGoPrev ? "pointer" : "default", fontSize: 16 }}>‹</button>
+                <div style={{ textAlign: "center" }}>
+                  <div style={{ fontSize: 14, fontWeight: "bold", color: "#1b4332" }}>
+                    {weekDays[0].split("-").reverse().join("/")} – {weekDays[6].split("-").reverse().join("/")}
+                  </div>
+                </div>
+                <button onClick={() => { setWeekMonday(nextMondayStr); setSelectedSlot(null); }} disabled={!canGoNext}
+                  style={{ background: canGoNext ? "#2d6a4f" : "#ccc", color: "#fff", border: "none", borderRadius: 10, padding: "8px 14px", cursor: canGoNext ? "pointer" : "default", fontSize: 16 }}>›</button>
+              </div>
+
+              {/* Days */}
+              {weekDays.map(date => {
+                const slots = getSlotsForDate(date);
+                const dbDay = weekBookings[date] || {};
+                const isSelected = date === selectedDate;
+                const isToday = date === todayStr();
+                const hasSlots = slots.length > 0;
+
+                return (
+                  <div key={date} style={{
+                    background: isSelected ? "#f0fff4" : "#fff",
+                    borderRadius: 14,
+                    border: isSelected ? "2px solid #2d6a4f" : "1px solid #e0ebe0",
+                    marginBottom: 10,
+                    overflow: "hidden",
+                    opacity: hasSlots ? 1 : 0.45,
+                    boxShadow: "0 1px 8px rgba(0,0,0,0.05)"
+                  }}>
+                    {/* Day header */}
+                    <div style={{
+                      background: isToday ? "#2d6a4f" : isSelected ? "#d8f3dc" : "#f4f9f4",
+                      padding: "10px 14px",
+                      display: "flex", alignItems: "center", justifyContent: "space-between"
+                    }}>
+                      <div>
+                        <span style={{ fontWeight: "bold", fontSize: 14, color: isToday ? "#fff" : "#1b4332" }}>
+                          {DAY_NAMES_FULL[new Date(date + "T12:00:00").getDay()]}
+                        </span>
+                        <span style={{ marginLeft: 8, fontSize: 13, color: isToday ? "rgba(255,255,255,0.8)" : "#666" }}>
+                          {date.split("-").reverse().join("/")}
+                        </span>
+                        {isToday && <span style={{ marginLeft: 6, fontSize: 11, background: "rgba(255,255,255,0.25)", borderRadius: 8, padding: "1px 6px", color: "#fff" }}>Σήμερα</span>}
+                      </div>
+                      {hasSlots && (
+                        <span style={{ fontSize: 12, color: isToday ? "rgba(255,255,255,0.8)" : "#888" }}>
+                          {slots.filter(h => !dbDay[h]).length} ελεύθερες
+                        </span>
                       )}
-                      {!booked && adminMode && <div style={{ fontSize: 10, marginTop: 3, opacity: 0.7 }}>+ Προσθήκη</div>}
-                      {sel && !booked && !adminMode && <div style={{ fontSize: 10, marginTop: 3 }}>✓ Επιλεγμένο</div>}
-                    </button>
-                  );
-                })}
+                    </div>
+
+                    {/* Slots */}
+                    {hasSlots ? (
+                      <div style={{ padding: "10px 12px", display: "flex", flexWrap: "wrap", gap: 6 }}>
+                        {slots.map(h => {
+                          const booked = !!dbDay[h];
+                          const mine = user && dbDay[h]?.uid === user.uid;
+                          const selThis = selectedDate === date && selectedSlot === h;
+                          const info = dbDay[h];
+
+                          let bg = "#f0fff4", border = "#74c69d", color = "#1b4332", cursor = "pointer";
+                          if (booked && mine) { bg = "#d8f3dc"; border = "#2d6a4f"; }
+                          else if (booked && adminMode) { bg = "#fff3cd"; border = "#e6a817"; color = "#7a4f00"; }
+                          else if (booked) { bg = "#fde8e8"; border = "#e5a0a0"; color = "#c0392b"; cursor = "not-allowed"; }
+                          else if (selThis) { bg = "#2d6a4f"; border = "#1b4332"; color = "#fff"; }
+
+                          return (
+                            <button key={h}
+                              onClick={() => {
+                                if (adminMode) {
+                                  setSelectedDate(date);
+                                  setAdminModal({ slot: h, existing: booked ? info : null });
+                                } else if (!booked) {
+                                  setSelectedDate(date);
+                                  setSelectedSlot(h === selectedSlot && date === selectedDate ? null : h);
+                                  setError("");
+                                }
+                              }}
+                              style={{ padding: "6px 10px", borderRadius: 8, border: `1.5px solid ${border}`, background: bg, color, fontSize: 12, cursor, fontFamily: "inherit", transition: "all 0.12s", minWidth: 80, textAlign: "center" }}>
+                              <div>{slotLabel(h)}</div>
+                              {booked && (
+                                <div style={{ fontSize: 10, marginTop: 1 }}>
+                                  <div style={{ fontWeight: "bold" }}>👤 {info.name}</div>
+                                  {info.partner && <div>👤 {info.partner}</div>}
+                                  {mine && !adminMode && (
+                                    <button onClick={e => { e.stopPropagation(); setSelectedDate(date); handleCancelMineOnDate(date, h); }}
+                                      style={{ ...S.btnDanger, padding: "2px 6px", fontSize: 10, marginTop: 2 }}>Ακύρωση</button>
+                                  )}
+                                  {adminMode && <div style={{ fontSize: 9, marginTop: 2, opacity: 0.7 }}>✏️ Επεξεργασία</div>}
+                                </div>
+                              )}
+                              {selThis && !booked && <div style={{ fontSize: 9, marginTop: 1 }}>✓</div>}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div style={{ padding: "8px 14px", fontSize: 12, color: "#aaa" }}>Κλειστό</div>
+                    )}
+                  </div>
+                );
+              })}
+
+              {/* Legend */}
+              <div style={{ display: "flex", gap: 10, marginTop: 4, fontSize: 11, color: "#666", flexWrap: "wrap" }}>
+                {[["#f0fff4","#74c69d","Διαθέσιμο"],["#fde8e8","#e5a0a0","Κλεισμένο"],["#d8f3dc","#2d6a4f","Δική μου"],["#2d6a4f","#1b4332","Επιλεγμένο"]]
+                  .map(([bg,br,label]) => (
+                  <span key={label} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                    <span style={{ width: 12, height: 12, borderRadius: 3, background: bg, border: `1.5px solid ${br}`, display: "inline-block" }} />
+                    {label}
+                  </span>
+                ))}
               </div>
-            )}
 
-            {error && <div style={S.error}>⚠️ {error}</div>}
+              {error && <div style={{ ...S.error, marginTop: 10 }}>⚠️ {error}</div>}
 
-            <div style={{ display: "flex", gap: 10, marginTop: 14, fontSize: 11, color: "#666", flexWrap: "wrap" }}>
-              {(adminMode
-                ? [["#f0fff4", "#74c69d", "Διαθέσιμο"], ["#fff3cd", "#e6a817", "Κλεισμένο"], ["#d8f3dc", "#2d6a4f", "Δική μου"]]
-                : [["#f8faf8", "#d0e8d0", "Διαθέσιμο"], ["#fde8e8", "#e5a0a0", "Κλεισμένο"], ["#d8f3dc", "#2d6a4f", "Δική μου"], ["#2d6a4f", "#1b4332", "Επιλεγμένο"]]
-              ).map(([bg, br, label]) => (
-                <span key={label} style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                  <span style={{ width: 12, height: 12, borderRadius: 3, background: bg, border: `1.5px solid ${br}`, display: "inline-block" }} />
-                  {label}
-                </span>
-              ))}
-            </div>
-
-            {selectedSlot !== null && !adminMode && (
-              <div style={{ marginTop: 16, background: "#f0f8f2", borderRadius: 12, padding: "12px 14px" }}>
-                <p style={{ margin: "0 0 6px", fontSize: 14, color: "#1b4332" }}>
-                  Επιλογή: <strong>{slotLabel(selectedSlot)}</strong>
-                </p>
-                <button onClick={handleBook} style={S.btn}>
-                  {user ? "Κράτηση →" : "🔵 Σύνδεση & Κράτηση →"}
-                </button>
-              </div>
-            )}
-          </div>
-        )}
+              {selectedSlot !== null && !adminMode && (
+                <div style={{ marginTop: 12, background: "#f0f8f2", borderRadius: 12, padding: "12px 14px", border: "1.5px solid #74c69d" }}>
+                  <p style={{ margin: "0 0 6px", fontSize: 14, color: "#1b4332" }}>
+                    📅 {formatDate(selectedDate)} · <strong>{slotLabel(selectedSlot)}</strong>
+                  </p>
+                  <button onClick={handleBook} style={S.btn}>
+                    {user ? "Κράτηση →" : "🔵 Σύνδεση & Κράτηση →"}
+                  </button>
+                </div>
+              )}
+            </>
+          );
+        })()}
 
         {/* CONFIRM */}
         {step === "confirm" && (
