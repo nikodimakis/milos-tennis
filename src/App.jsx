@@ -18,6 +18,24 @@ function formatDate(d) {
 function pad(n) { return String(n).padStart(2, "0"); }
 function slotLabel(h) { return `${pad(h)}:00 – ${pad(h + 1)}:00`; }
 
+function getWeekMonday(dateStr) {
+  const d = new Date(dateStr + "T12:00:00");
+  const day = d.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  d.setDate(d.getDate() + diff);
+  return d.toISOString().split("T")[0];
+}
+
+function getWeekDays(mondayStr) {
+  return Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(mondayStr + "T12:00:00");
+    d.setDate(d.getDate() + i);
+    return d.toISOString().split("T")[0];
+  });
+}
+
+const DAY_NAMES_FULL = ["Κυριακή","Δευτέρα","Τρίτη","Τετάρτη","Πέμπτη","Παρασκευή","Σάββατο"];
+
 function getSlotsForDate(dateStr) {
   if (dateStr < SCHEDULE_START || dateStr > SCHEDULE_END) return [];
   const dow = new Date(dateStr + "T12:00:00").getDay(); // 0=Κυρ,1=Δευ,...,6=Σαβ
