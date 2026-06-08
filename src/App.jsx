@@ -21,10 +21,9 @@ function slotLabel(h) { return `${pad(h)}:00 – ${pad(h + 1)}:00`; }
 function getSlotsForDate(dateStr) {
   if (dateStr < SCHEDULE_START || dateStr > SCHEDULE_END) return [];
   const dow = new Date(dateStr + "T12:00:00").getDay(); // 0=Κυρ,1=Δευ,...,6=Σαβ
-  if (dow === 3) return [19, 20, 21];                          // Τετάρτη: 19-22
-  if (dow === 0 || dow === 6) return [15,16,17,18,19,20,21];  // Σαβ/Κυρ: 15-22
-  if (dow === 0) return [];                                     // Κυριακή κλειστή? No - covered above
-  return [16, 17, 18];                                          // Δευ/Τρι/Πεμ/Παρ: 16-19
+  if (dow === 3) return [19, 20, 21];                         // Τετάρτη: 19:00–22:00
+  if (dow === 0 || dow === 6) return [15,16,17,18,19,20,21]; // Σαβ/Κυρ: 15:00–22:00
+  return [16, 17, 18];                                        // Δευ/Τρι/Πεμ/Παρ: 16:00–19:00
 }
 
 // ─── FIRESTORE HELPERS ─────────────────────────────────────────────────────
