@@ -135,7 +135,10 @@ export default function App() {
   const [partnerEmail, setPartnerEmail] = useState("");
   const [partnerEmailError, setPartnerEmailError] = useState("");
   const [adminModal, setAdminModal] = useState(null);
-  const [hiddenWeeks, setHiddenWeeks] = useState([]); // array of monday strings
+  const [hiddenWeeks, setHiddenWeeks] = useState([]);
+  const [showStats, setShowStats] = useState(false);
+  const [statsData, setStatsData] = useState(null);
+  const [statsLoading, setStatsLoading] = useState(false); // array of monday strings
 
   // ── Firebase Auth ──
   useEffect(() => {
@@ -344,6 +347,66 @@ export default function App() {
     setAdminModal(null);
   }
 
+  async function loadStats() {
+    setStatsLoading(true);
+    try {
+      // Φόρτωσε όλες τις κρατήσεις από SCHEDULE_START έως σήμερα
+      const allDays = [];
+      let d = new Date(SCHEDULE_START + "T12:00:00");
+      const endD = new Date(Math.min(new Date(SCHEDULE_END + "T12:00:00"), new Date()));
+      while (d <= endD) {
+        allDays.push(d.toISOString().split("T")[0]);
+        d.setDate(d.getDate() + 1);
+      }
+
+      const bookingsByUser = {}; // { name: count }
+      const bookingsByHour = {}; // { hour: count }
+      const bookingsByDay  = {}; // { dayName: count }
+      const bookingsByWeek = {}; // { monday: { total, available } }
+      let totalBookings = 0;
+      let totalSlotsDone = 0;
+
+      for (const date of allDays) {
+        const snap = await getDoc(doc(db, "bookings", date));
+        const slots = getSlotsForDate(date, []);
+        totalSlotsDone += slots.length;
+        if (snap.exists()) {
+          const data = snap.data();
+          for (const [h, b] of Object.entries(data)) {
+            if (!b || !b.name) continue;
+            totalBookings++;
+            // Ανά χρήστη
+            bookingsByUser[b.name] = (bookingsByUser[b.name] || 0) + 1;
+            // Ανά ώρα
+            bookingsByHour[h] = (bookingsByHour[h] || 0) + 1;
+            // Ανά μέρα εβδομάδας
+            const dow = DAY_NAMES_FULL[new Date(date + "T12:00:00").getDay()];
+            bookingsByDay[dow] = (bookingsByDay[dow] || 0) + 1;
+            // Ανά εβδομάδα
+            const monday = getWeekMonday(date);
+            if (!bookingsByWeek[monday]) bookingsByWeek[monday] = { total: 0, available: 0 };
+            bookingsByWeek[monday].total++;
+          }
+        }
+        // Διαθέσιμες ανά εβδομάδα
+        const monday = getWeekMonday(date);
+        if (!bookingsByWeek[monday]) bookingsByWeek[monday] = { total: 0, available: 0 };
+        bookingsByWeek[monday].available += slots.length;
+      }
+
+      setStatsData({
+        totalBookings,
+        totalSlotsDone,
+        occupancy: totalSlotsDone > 0 ? Math.round(totalBookings / totalSlotsDone * 100) : 0,
+        byUser: Object.entries(bookingsByUser).sort((a,b) => b[1]-a[1]).slice(0,10),
+        byHour: Object.entries(bookingsByHour).sort((a,b) => b[1]-a[1]),
+        byDay: Object.entries(bookingsByDay).sort((a,b) => b[1]-a[1]),
+        byWeek: Object.entries(bookingsByWeek).sort((a,b) => a[0].localeCompare(b[0])),
+      });
+    } catch(e) { console.error(e); }
+    finally { setStatsLoading(false); }
+  }
+
   async function toggleWeekVisibility(mondayStr) {
     const newHidden = hiddenWeeks.includes(mondayStr)
       ? hiddenWeeks.filter(w => w !== mondayStr)
@@ -367,6 +430,110 @@ export default function App() {
     const mins = Math.floor(ms / 60000);
     return `${mins}λ`;
   }
+
+  // Stats Modal
+  const StatsModal = () => {
+    useEffect(() => { if (showStats && !statsData) loadStats(); }, [showStats]);
+    if (!showStats) return null;
+    return (
+      <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 400, overflowY: "auto", padding: 16 }}>
+        <div style={{ background: "#fff", borderRadius: 20, padding: 24, maxWidth: 480, margin: "0 auto" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+            <h2 style={{ margin: 0, fontSize: 20, color: "#1b4332" }}>📊 Στατιστικά</h2>
+            <button onClick={() => { setShowStats(false); setStatsData(null); }} style={{ background: "none", border: "none", fontSize: 24, cursor: "pointer", color: "#666" }}>×</button>
+          </div>
+
+          {statsLoading && <div style={{ textAlign: "center", padding: 40, color: "#2d6a4f" }}>⏳ Φόρτωση...</div>}
+
+          {statsData && !statsLoading && (
+            <>
+              {/* Γενικά */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 20 }}>
+                {[
+                  ["🎾", "Κρατήσεις", statsData.totalBookings],
+                  ["📅", "Διαθέσιμες", statsData.totalSlotsDone],
+                  ["📈", "Πληρότητα", statsData.occupancy + "%"],
+                ].map(([icon, label, val]) => (
+                  <div key={label} style={{ background: "#f0f8f2", borderRadius: 12, padding: "12px 8px", textAlign: "center", border: "1px solid #d8f3dc" }}>
+                    <div style={{ fontSize: 22 }}>{icon}</div>
+                    <div style={{ fontSize: 18, fontWeight: "bold", color: "#1b4332" }}>{val}</div>
+                    <div style={{ fontSize: 11, color: "#666" }}>{label}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Top χρήστες */}
+              <div style={{ marginBottom: 16 }}>
+                <h3 style={{ margin: "0 0 10px", fontSize: 14, color: "#1b4332" }}>👤 Top παίκτες</h3>
+                {statsData.byUser.length === 0 && <p style={{ fontSize: 13, color: "#aaa" }}>Καμία κράτηση ακόμα.</p>}
+                {statsData.byUser.map(([name, count], i) => (
+                  <div key={name} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0", borderBottom: "1px solid #f0f0f0" }}>
+                    <span style={{ fontSize: 13, color: "#888", width: 20 }}>#{i+1}</span>
+                    <span style={{ flex: 1, fontSize: 13 }}>{name}</span>
+                    <div style={{ background: "#2d6a4f", height: 8, borderRadius: 4, width: Math.max(20, count * 20) }} />
+                    <span style={{ fontSize: 13, fontWeight: "bold", color: "#2d6a4f", width: 30, textAlign: "right" }}>{count}</span>
+                  </div>
+                ))}
+              </div>
+
+              {/* Ανά ώρα */}
+              <div style={{ marginBottom: 16 }}>
+                <h3 style={{ margin: "0 0 10px", fontSize: 14, color: "#1b4332" }}>🕐 Πιο δημοφιλείς ώρες</h3>
+                {statsData.byHour.map(([h, count]) => (
+                  <div key={h} style={{ display: "flex", alignItems: "center", gap: 10, padding: "5px 0", borderBottom: "1px solid #f0f0f0" }}>
+                    <span style={{ fontSize: 13, width: 80 }}>{slotLabel(parseInt(h))}</span>
+                    <div style={{ flex: 1, background: "#f0f0f0", borderRadius: 4, height: 8 }}>
+                      <div style={{ background: "#40916c", height: 8, borderRadius: 4, width: `${Math.min(100, count * 20)}%` }} />
+                    </div>
+                    <span style={{ fontSize: 13, fontWeight: "bold", color: "#2d6a4f", width: 20 }}>{count}</span>
+                  </div>
+                ))}
+              </div>
+
+              {/* Ανά μέρα */}
+              <div style={{ marginBottom: 16 }}>
+                <h3 style={{ margin: "0 0 10px", fontSize: 14, color: "#1b4332" }}>📆 Ανά ημέρα εβδομάδας</h3>
+                {statsData.byDay.map(([day, count]) => (
+                  <div key={day} style={{ display: "flex", alignItems: "center", gap: 10, padding: "5px 0", borderBottom: "1px solid #f0f0f0" }}>
+                    <span style={{ fontSize: 13, flex: 1 }}>{day}</span>
+                    <div style={{ width: 100, background: "#f0f0f0", borderRadius: 4, height: 8 }}>
+                      <div style={{ background: "#52b788", height: 8, borderRadius: 4, width: `${Math.min(100, count * 15)}%` }} />
+                    </div>
+                    <span style={{ fontSize: 13, fontWeight: "bold", color: "#2d6a4f", width: 20 }}>{count}</span>
+                  </div>
+                ))}
+              </div>
+
+              {/* Ανά εβδομάδα */}
+              <div>
+                <h3 style={{ margin: "0 0 10px", fontSize: 14, color: "#1b4332" }}>📅 Πληρότητα ανά εβδομάδα</h3>
+                {statsData.byWeek.map(([monday, { total, available }]) => {
+                  const pct = available > 0 ? Math.round(total / available * 100) : 0;
+                  return (
+                    <div key={monday} style={{ padding: "6px 0", borderBottom: "1px solid #f0f0f0" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
+                        <span style={{ fontSize: 12, color: "#444" }}>
+                          {monday.split("-").reverse().join("/")}
+                        </span>
+                        <span style={{ fontSize: 12, fontWeight: "bold", color: pct > 70 ? "#c0392b" : "#2d6a4f" }}>
+                          {total}/{available} ({pct}%)
+                        </span>
+                      </div>
+                      <div style={{ background: "#f0f0f0", borderRadius: 4, height: 6 }}>
+                        <div style={{ background: pct > 70 ? "#e74c3c" : "#2d6a4f", height: 6, borderRadius: 4, width: `${pct}%`, transition: "width 0.5s" }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <button onClick={loadStats} style={{ ...S.btn, marginTop: 16, background: "#40916c" }}>🔄 Ανανέωση</button>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  };
 
   if (authLoading) {
     return (
@@ -461,6 +628,9 @@ export default function App() {
               </div>
             </div>
             <p style={{ margin: "14px 0 6px", fontSize: 12, color: "#74c69d" }}>💡 Κλικ σε ώρα για προσθήκη, επεξεργασία ή ακύρωση.</p>
+            <button onClick={() => setShowStats(true)} style={{ ...S.btnAdmin, marginTop: 10 }}>
+              📊 Στατιστικά
+            </button>
           </div>
         )}
 
@@ -665,6 +835,8 @@ export default function App() {
           </div>
         )}
       </div>
+
+      <StatsModal />
 
       {adminModal && (
         <AdminBookingModal
