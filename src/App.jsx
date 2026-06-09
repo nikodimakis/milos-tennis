@@ -259,22 +259,8 @@ export default function App() {
 
     const email2 = partnerEmail.trim().toLowerCase();
 
-    // Αν δεν έχει βάλει 2ο παίκτη — απλή κράτηση
-    if (!email2) {
-      setLoading(true);
-      try {
-        const dayB = weekBookings[selectedDate] || {};
-        const newDay = { ...dayB, [selectedSlot]: { uid: user.uid, name: user.name, email: user.email, status: "confirmed" } };
-        await saveDayBookings(selectedDate, newDay);
-        await setDoc(doc(db, "userBookings", user.uid), { date: selectedDate, hour: selectedSlot });
-        setLastBooking({ date: selectedDate, slot: selectedSlot, name: user.name, partner: null });
-        setStep("success"); setSelectedSlot(null); setPartnerEmail("");
-      } catch(e) { setError("Σφάλμα αποθήκευσης."); }
-      finally { setLoading(false); }
-      return;
-    }
-
-    // Έλεγξε email 2ου παίκτη
+    // Υποχρεωτικό το email 2ου παίκτη
+    if (!email2) { setPartnerEmailError("Το Gmail του 2ου παίκτη είναι υποχρεωτικό."); return; }
     if (!email2.includes("@")) { setPartnerEmailError("Μη έγκυρο email."); return; }
     if (email2 === user.email.toLowerCase()) { setPartnerEmailError("Δεν μπορείτε να βάλετε το δικό σας email."); return; }
 
@@ -518,6 +504,7 @@ export default function App() {
 
               {weekDays.map(date => {
                 const slots = adminMode ? getSlotsForDate(date, []) : getSlotsForDate(date, hiddenWeeks);
+                if (!adminMode && getSlotsForDate(date, hiddenWeeks).length === 0 && hiddenWeeks.includes(getWeekMonday(date))) return null;
                 const dbDay = weekBookings[date] || {};
                 const isToday = date === todayStr();
                 const hasSlots = slots.length > 0;
@@ -596,6 +583,12 @@ export default function App() {
                 ))}
               </div>
 
+              {!adminMode && hiddenWeeks.includes(weekMonday) && (
+                <div style={{ textAlign: "center", padding: "30px 0", color: "#888" }}>
+                  <div style={{ fontSize: 36, marginBottom: 8 }}>📅</div>
+                  <p style={{ margin: 0, fontSize: 14 }}>Δεν υπάρχουν διαθέσιμες ώρες αυτή την εβδομάδα.</p>
+                </div>
+              )}
               {error && <div style={{ ...S.error, marginTop: 10 }}>⚠️ {error}</div>}
 
               {selectedSlot !== null && !adminMode && (
@@ -629,7 +622,7 @@ export default function App() {
               </div>
             </div>
 
-            <label style={S.label}>👤 Gmail 2ου παίκτη <span style={{ fontWeight: "normal", color: "#999" }}>(προαιρετικό)</span></label>
+            <label style={S.label}>👤 Gmail 2ου παίκτη <span style={{ color: "#c0392b" }}>*</span></label>
             <input value={partnerEmail} onChange={e => { setPartnerEmail(e.target.value); setPartnerEmailError(""); }}
               placeholder="π.χ. kostas@gmail.com" style={S.input} type="email" />
             {partnerEmailError && <div style={S.error}>⚠️ {partnerEmailError}</div>}
