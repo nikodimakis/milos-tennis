@@ -268,22 +268,8 @@ export default function App() {
 
     const email2 = partnerEmail.trim().toLowerCase();
 
-    // Αν δεν έχει βάλει 2ο παίκτη — απλή κράτηση
-    if (!email2) {
-      setLoading(true);
-      try {
-        const dayB = weekBookings[selectedDate] || {};
-        const newDay = { ...dayB, [selectedSlot]: { uid: user.uid, name: user.name, email: user.email, status: "confirmed" } };
-        await saveDayBookings(selectedDate, newDay);
-        await setDoc(doc(db, "userBookings", user.uid), { date: selectedDate, hour: selectedSlot });
-        setLastBooking({ date: selectedDate, slot: selectedSlot, name: user.name, partner: null });
-        setStep("success"); setSelectedSlot(null); setPartnerEmail("");
-      } catch(e) { setError("Σφάλμα αποθήκευσης."); }
-      finally { setLoading(false); }
-      return;
-    }
-
-    // Έλεγξε email 2ου παίκτη
+    // Υποχρεωτικό το email 2ου παίκτη
+    if (!email2) { setPartnerEmailError("Το Gmail του 2ου παίκτη είναι υποχρεωτικό."); return; }
     if (!email2.includes("@")) { setPartnerEmailError("Μη έγκυρο email."); return; }
     if (email2 === user.email.toLowerCase()) { setPartnerEmailError("Δεν μπορείτε να βάλετε το δικό σας email."); return; }
 
