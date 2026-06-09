@@ -90,7 +90,7 @@ const S = {
 // ─── ADMIN BOOKING MODAL ───────────────────────────────────────────────────
 function AdminBookingModal({ slot, date, existing, onSave, onCancel, onClose }) {
   const [name, setName] = useState(existing?.name || "");
-  const [partner, setPartner] = useState(existing?.partner || "");
+  const [partner, setPartner] = useState(existing?.player2name || existing?.partner || "");
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 300, padding: 16 }}>
       <div style={{ background: "#1b4332", borderRadius: 20, padding: 28, width: "100%", maxWidth: 360, boxShadow: "0 8px 40px rgba(0,0,0,0.4)" }}>
@@ -102,7 +102,7 @@ function AdminBookingModal({ slot, date, existing, onSave, onCancel, onClose }) 
         <input value={partner} onChange={e => setPartner(e.target.value)} placeholder="Ονοματεπώνυμο" style={S.inputDark} />
         <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
           <button onClick={onClose} style={{ ...S.btnOutlineLight, flex: 1 }}>Άκυρο</button>
-          <button onClick={() => { if (name.trim()) onSave({ uid: existing?.uid || ("admin_" + Date.now()), name: name.trim(), partner: partner.trim() || null, byAdmin: true }); }} style={{ ...S.btnAdmin, flex: 2, marginTop: 0 }}>💾 Αποθήκευση</button>
+          <button onClick={() => { if (name.trim()) onSave({ uid: existing?.uid || ("admin_" + Date.now()), name: name.trim(), partner: partner.trim() || null, player2name: partner.trim() || null, status: "confirmed", byAdmin: true }); }} style={{ ...S.btnAdmin, flex: 2, marginTop: 0 }}>💾 Αποθήκευση</button>
         </div>
         {existing && (
           <button onClick={onCancel} style={{ ...S.btnDanger, width: "100%", marginTop: 12, padding: "11px", fontSize: 13, borderRadius: 10 }}>
@@ -724,7 +724,7 @@ export default function App() {
                                 <div style={{ fontSize: 10, marginTop: 1 }}>
                                   {pending && <div style={{ fontSize: 9, color: "#e6a817", fontWeight: "bold" }}>🟡 Εκκρεμής</div>}
                                   <div style={{ fontWeight: "bold" }}>👤 {info.name}</div>
-                                  {info.player2name && <div>👤 {info.player2name}</div>}
+                                  {(info.player2name || info.partner) && <div>👤 {info.player2name || info.partner}</div>}
                                   {(mine || isPlayer2) && !adminMode && (
                                     <button onClick={e => { e.stopPropagation(); handleCancelBooking(date, h); }}
                                       style={{ ...S.btnDanger, padding: "2px 6px", fontSize: 10, marginTop: 2 }}>Ακύρωση</button>
