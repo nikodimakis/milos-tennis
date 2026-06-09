@@ -4,8 +4,9 @@ import { doc, getDoc, setDoc, deleteDoc, onSnapshot, collection, query, where, g
 
 // ─── CONFIG ────────────────────────────────────────────────────────────────
 const ADMIN_PASSWORD = "dimos2024";
-const SCHEDULE_START = "2026-06-02";
-const SCHEDULE_END   = "2026-06-19";
+const SCHEDULE_START  = "2026-06-02";
+const SCHEDULE_END    = "2026-08-30";
+const SCHEDULE2_START = "2026-06-19"; // Νέο πρόγραμμα από 19/6
 const PENDING_EXPIRY_MS = 60 * 60 * 1000; // 1 ώρα σε milliseconds
 
 // ─── HELPERS ───────────────────────────────────────────────────────────────
@@ -35,12 +36,27 @@ function getWeekDays(mondayStr) {
 
 const DAY_NAMES_FULL = ["Κυριακή","Δευτέρα","Τρίτη","Τετάρτη","Πέμπτη","Παρασκευή","Σάββατο"];
 
-function getSlotsForDate(dateStr) {
+function getSlotsForDate(dateStr, hiddenWeeks = []) {
   if (dateStr < SCHEDULE_START || dateStr > SCHEDULE_END) return [];
+  // Έλεγξε αν η εβδομάδα είναι κρυμμένη
+  const monday = getWeekMonday(dateStr);
+  if (hiddenWeeks.includes(monday)) return [];
+
   const dow = new Date(dateStr + "T12:00:00").getDay();
-  if (dow === 3) return [19, 20, 21];
-  if (dow === 0 || dow === 6) return [15,16,17,18,19,20,21];
-  return [16, 17, 18];
+
+  if (dateStr < SCHEDULE2_START) {
+    // Παλιό πρόγραμμα: 2/6–19/6
+    if (dow === 3) return [19, 20, 21];                         // Τετ: 19–22
+    if (dow === 0 || dow === 6) return [15,16,17,18,19,20,21]; // Σαβ/Κυρ: 15–22
+    return [16, 17, 18];                                        // Δευ/Τρι/Πεμ/Παρ: 16–19
+  } else {
+    // Νέο πρόγραμμα: 19/6–30/8
+    if (dow === 1 || dow === 3 || dow === 5) return [19, 20, 21];     // Δευ/Τετ/Παρ: 19–22
+    if (dow === 2 || dow === 4) return [16, 17, 18];                   // Τρι/Πεμ: 16–19
+    if (dow === 6) return [8, 9, 10, 11, 12, 13, 14];                 // Σαβ: 08–15
+    if (dow === 0) return [15,16,17,18,19,20,21];                      // Κυρ: 15–22
+    return [];
+  }
 }
 
 async function saveDayBookings(dateStr, data) {
@@ -119,6 +135,7 @@ export default function App() {
   const [partnerEmail, setPartnerEmail] = useState("");
   const [partnerEmailError, setPartnerEmailError] = useState("");
   const [adminModal, setAdminModal] = useState(null);
+  const [hiddenWeeks, setHiddenWeeks] = useState([]); // array of monday strings
 
   // ── Firebase Auth ──
   useEffect(() => {
@@ -129,6 +146,13 @@ export default function App() {
         setUser(null);
       }
       setAuthLoading(false);
+    });
+  }, []);
+
+  // ── Hidden weeks listener ──
+  useEffect(() => {
+    return onSnapshot(doc(db, "settings", "hiddenWeeks"), snap => {
+      setHiddenWeeks(snap.exists() ? (snap.data().weeks || []) : []);
     });
   }, []);
 
@@ -334,6 +358,13 @@ export default function App() {
     setAdminModal(null);
   }
 
+  async function toggleWeekVisibility(mondayStr) {
+    const newHidden = hiddenWeeks.includes(mondayStr)
+      ? hiddenWeeks.filter(w => w !== mondayStr)
+      : [...hiddenWeeks, mondayStr];
+    await setDoc(doc(db, "settings", "hiddenWeeks"), { weeks: newHidden });
+  }
+
   function handleAdminLogin() {
     if (adminInput === ADMIN_PASSWORD) { setAdminMode(true); setShowAdminLogin(false); setAdminErr(""); setAdminInput(""); }
     else setAdminErr("Λάθος κωδικός.");
@@ -460,21 +491,33 @@ export default function App() {
           return (
             <>
               <div style={{ background: "#e8f4ec", borderRadius: 12, padding: "8px 14px", marginBottom: 12, fontSize: 12, color: "#2d6a4f" }}>
-                📋 <strong>02/06–19/06/2026</strong> · Δευ/Τρι/Πεμ/Παρ: 16–19 · Τετ: 19–22 · Σαβ/Κυρ: 15–22
+                📋 <strong>02/06–19/06:</strong> Δευ/Τρι/Πεμ/Παρ: 16–19 · Τετ: 19–22 · Σαβ/Κυρ: 15–22<br/>
+                📋 <strong>19/06–30/08:</strong> Δευ/Τετ/Παρ: 19–22 · Τρι/Πεμ: 16–19 · Σαβ: 08–15 · Κυρ: 15–22
               </div>
 
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
                 <button onClick={() => { setWeekMonday(prevMondayStr); setSelectedSlot(null); }} disabled={!canGoPrev}
                   style={{ background: canGoPrev ? "#2d6a4f" : "#ccc", color: "#fff", border: "none", borderRadius: 10, padding: "8px 14px", cursor: canGoPrev ? "pointer" : "default", fontSize: 16 }}>‹</button>
-                <div style={{ fontSize: 14, fontWeight: "bold", color: "#1b4332" }}>
-                  {weekDays[0].split("-").reverse().join("/")} – {weekDays[6].split("-").reverse().join("/")}
+                <div style={{ textAlign: "center" }}>
+                  <div style={{ fontSize: 14, fontWeight: "bold", color: "#1b4332" }}>
+                    {weekDays[0].split("-").reverse().join("/")} – {weekDays[6].split("-").reverse().join("/")}
+                  </div>
+                  {adminMode && (
+                    <button onClick={() => toggleWeekVisibility(weekMonday)} style={{
+                      marginTop: 4, fontSize: 11, padding: "3px 10px", borderRadius: 8, border: "none", cursor: "pointer",
+                      background: hiddenWeeks.includes(weekMonday) ? "#2d6a4f" : "#c0392b",
+                      color: "#fff"
+                    }}>
+                      {hiddenWeeks.includes(weekMonday) ? "👁️ Εμφάνιση εβδομάδας" : "🙈 Απόκρυψη εβδομάδας"}
+                    </button>
+                  )}
                 </div>
                 <button onClick={() => { setWeekMonday(nextMondayStr); setSelectedSlot(null); }} disabled={!canGoNext}
                   style={{ background: canGoNext ? "#2d6a4f" : "#ccc", color: "#fff", border: "none", borderRadius: 10, padding: "8px 14px", cursor: canGoNext ? "pointer" : "default", fontSize: 16 }}>›</button>
               </div>
 
               {weekDays.map(date => {
-                const slots = getSlotsForDate(date);
+                const slots = adminMode ? getSlotsForDate(date, []) : getSlotsForDate(date, hiddenWeeks);
                 const dbDay = weekBookings[date] || {};
                 const isToday = date === todayStr();
                 const hasSlots = slots.length > 0;
@@ -490,6 +533,11 @@ export default function App() {
                       {hasSlots && <span style={{ fontSize: 12, color: isToday ? "rgba(255,255,255,0.8)" : "#888" }}>{slots.filter(h => !dbDay[h]).length} ελεύθερες</span>}
                     </div>
 
+                    {adminMode && hiddenWeeks.includes(getWeekMonday(date)) && (
+                      <div style={{ padding: "6px 14px", fontSize: 11, color: "#e6a817", background: "#fff8e1" }}>
+                        🙈 Κρυμμένη εβδομάδα (μόνο admin τη βλέπει)
+                      </div>
+                    )}
                     {hasSlots ? (
                       <div style={{ padding: "10px 12px", display: "flex", flexWrap: "wrap", gap: 6 }}>
                         {slots.map(h => {
