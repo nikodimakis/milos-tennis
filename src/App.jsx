@@ -574,7 +574,17 @@ export default function App() {
                                 <div style={{ fontSize: 10, marginTop: 1 }}>
                                   {pending && <div style={{ fontSize: 9, color: "#e6a817", fontWeight: "bold" }}>🟡 Εκκρεμής</div>}
                                   <div style={{ fontWeight: "bold" }}>👤 {info.name}</div>
-                                  {info.player2name && <div>👤 {info.player2name}</div>}
+                                  {/* Επιβεβαιωμένη — πάντα φαίνεται το 2ο όνομα */}
+                                  {!pending && (info.player2name || info.partner) && (
+                                    <div>👤 {info.player2name || info.partner}</div>
+                                  )}
+                                  {/* Εκκρεμής — email μόνο σε αποστολέα & admin */}
+                                  {pending && (mine || adminMode) && (
+                                    <div style={{ fontSize: 9, color: "#e6a817" }}>📧 {info.player2email}</div>
+                                  )}
+                                  {pending && !mine && !adminMode && (
+                                    <div style={{ fontSize: 9, color: "#e6a817" }}>⏳ Αναμονή 2ου παίκτη</div>
+                                  )}
                                   {(mine || isPlayer2) && !adminMode && (
                                     <button onClick={e => { e.stopPropagation(); handleCancelBooking(date, h); }}
                                       style={{ ...S.btnDanger, padding: "2px 6px", fontSize: 10, marginTop: 2 }}>Ακύρωση</button>
